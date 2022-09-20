@@ -1,0 +1,652 @@
+#include <wiringPi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <mysql/mysql.h>
+#include <stdio.h>
+#include <time.h>
+#define MAX_TIME 85
+#define DHT11PIN 7
+
+
+MYSQL *conn;
+MYSQL_RES *res;
+MYSQL_ROW row;
+
+
+
+char timeForData[100];
+char query[100], * end; //temp humidity strings
+char humidity[100];
+char temperature[100];
+char lcdArray[100], * lcdEnd;
+
+char rangeBasedStr [100] , *rangeEnd;
+char firstDate[100];
+char secondDate[200] ;
+
+char *server = "localhost"; //sql log in strings
+char *user = "john";
+char *password = "password";
+char *database = "projectDB";
+
+int userNumber;
+int userNumber2;
+int dht11_val[5] = { 0, 0, 0, 0, 0 }; //temperature
+int LCDAddr = 0x27; //address to lcd
+int BLEN = 1;
+int fd;
+
+
+uint8_t laststate = HIGH;
+uint8_t counter = 0;
+uint8_t j = 0, i;
+float f;
+
+unsigned int choiceMenu()
+{
+printf("%s", "\nYour choices are:\n"
+        "1 - find minimum temperature\n"
+        "2 - find the maximum temperature\n"
+        "3 - find average temperature\n"
+        "4 - find minimum humidity\n"
+        "5 - find maximum humidity\n"
+        "6 - find average humidity\n"
+        "7 - time based range menu\n"
+        "8 - display time to lcd panel\n"
+        "9 - display current temp and humidity to lcd panel\n"
+        "10 - END program \n"
+        "0 - to log data to database indefinitely \n");
+    unsigned int user_choice;
+    scanf("%d", &user_choice);
+    return user_choice;
+}
+
+unsigned int timeChoiceMenu()
+{
+printf("%s", "\nYour choices are:\n"
+        "1 - find average temperature\n"
+        "2 - find the average humidity\n"
+        "3 - find max temperature\n"
+        "4 - find max humidity\n"
+        "5 - find min temp\n"
+        "6 - find min humidity\n"
+
+        "11 - END program \n");
+
+    unsigned int user_choice2;
+    scanf("%d", &user_choice2);
+    return user_choice2;;
+}
+
+
+
+void write(int x, int y, char data[]) //writing to lcd panel
+{
+int addr, i;
+int tmp;
+if (x < 0) x = 0;
+if (x > 15) x = 15;
+if (y < 0) y = 0;
+if (y > 1) y = 1;
+
+// Move cursor
+addr = 0x80 + 0x40 * y + x;
+send_command(addr);
+
+tmp = strlen(data);
+for (i = 0; i < tmp; i++)
+{
+send_data(data[i]);
+}
+}
+
+void currentTemp()
+{
+{
+
+  uint8_t lststate=HIGH;
+  uint8_t counter=0;
+  uint8_t j=0,i;
+  float farenheit;
+
+  for(i=0;i<5;i++)
+     dht11_val[i]=0;
+  pinMode(DHT11PIN,OUTPUT);
+  digitalWrite(DHT11PIN,LOW);
+  delay(18);
+  digitalWrite(DHT11PIN,HIGH);
+  delayMicroseconds(40);
+  pinMode(DHT11PIN,INPUT);
+  for(i=0;i<MAX_TIME;i++)
+  {
+    counter=0;
+    while(digitalRead(DHT11PIN)==lststate)
+    {
+      counter++;
+      delayMicroseconds(1);
+      if(counter==255)
+        break;
+    }
+    lststate=digitalRead(DHT11PIN);
+    if(counter==255)
+       break;
+    // top 3 transistions are ignored
+    if((i>=4)&&(i%2==0))
+    {
+      dht11_val[j/8]<<=1;
+      if(counter>16)
+        dht11_val[j/8]|=1;
+      j++;
+    }
+  }
+  // verify cheksum and print the verified data
+
+if((j>=40)&&(dht11_val[4]==((dht11_val[0]+dht11_val[1]+dht11_val[2]+dht11_val[3])&
+0xFF)))
+  {
+    farenheit=dht11_val[2]*9./5.+32;
+
+
+     sprintf(lcdArray,"Humidity = %d.%d %% Temperature = %d.%d *C (%.1f *F)\n\n",dht11_val[0],dht11_val[1],dht11_val[2],dht11_val[3],farenheit);
+     write(0,0,lcdArray);
+
+    printf("Humidity = %d.%d %% Temperature = %d.%d *C (%.1f *F)\n\n",dht11_val[0],dht11_val[1],dht11_val[2],dht11_val[3],farenheit);
+  }
+  else
+   { printf("Invalid Data!!\n");
+     sprintf(lcdArray,"Invalid Data!!\n");
+     write(0,0,lcdArray);
+     }
+}
+}
+
+void GetDataToDatabase() //temperature sensor
+{
+  uint8_t lststate=HIGH;
+  uint8_t counter=0;
+  uint8_t j=0,i;
+  float farenheit;
+
+  for(i=0;i<5;i++)
+     dht11_val[i]=0;
+  pinMode(DHT11PIN,OUTPUT);
+  digitalWrite(DHT11PIN,LOW);
+  delay(18);
+  digitalWrite(DHT11PIN,HIGH);
+  delayMicroseconds(40);
+  pinMode(DHT11PIN,INPUT);
+  for(i=0;i<MAX_TIME;i++)
+  {
+    counter=0;
+    while(digitalRead(DHT11PIN)==lststate)
+    {
+      counter++;
+      delayMicroseconds(1);
+      if(counter==255)
+        break;
+    }
+    lststate=digitalRead(DHT11PIN);
+    if(counter==255)
+       break;
+    // top 3 transistions are ignored
+    if((i>=4)&&(i%2==0))
+    {
+      dht11_val[j/8]<<=1;
+      if(counter>16)
+        dht11_val[j/8]|=1;
+      j++;
+    }
+  }
+  // verify cheksum and print the verified data
+
+if((j>=40)&&(dht11_val[4]==((dht11_val[0]+dht11_val[1]+dht11_val[2]+dht11_val[3])&0xFF)))
+  {
+    farenheit=dht11_val[2]*9./5.+32;
+   snprintf(humidity, sizeof(humidity) ,"%d.%d", dht11_val[0], dht11_val[1]);
+   snprintf(temperature, sizeof(temperature) ,"%.1f",farenheit); //temp
+
+conn = mysql_init(NULL);
+/* Connect to database */
+if (!mysql_real_connect(conn, server,
+user, password, database, 0, NULL, 0))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+
+
+
+
+end = strcpy(query, "insert into data values(");
+end = strcat(query, "NULL,");
+end = strcat(query, temperature);
+end = strcat(query, ",");
+end = strcat(query, humidity);
+end = strcat(query, ")");
+//end = strcat(query, )
+printf("%s", query);
+//char query[100] = "insert into data values ('test time',60,3)";
+
+if (mysql_query(conn, query))
+
+{
+
+fprintf(stderr, "%s\n", mysql_error(conn));
+
+exit(1);
+
+}
+mysql_free_result(res);
+
+mysql_close(conn);
+
+
+}
+else
+{
+printf( "Data not good, skip\n" );
+}
+}
+
+
+
+void write_word(int data){
+int temp = data;
+if ( BLEN == 1 )
+temp |= 0x08;
+else
+temp &= 0xF7;
+wiringPiI2CWrite(fd, temp);
+}
+
+void send_command(int comm){
+int buf;
+// Send bit7-4 firstly
+buf = comm & 0xF0;
+buf |= 0x04; // RS = 0, RW = 0, EN = 1
+write_word(buf);
+delay(2);
+buf &= 0xFB; // Make EN = 0
+write_word(buf);
+
+// Send bit3-0 secondly
+buf = (comm & 0x0F) << 4;
+buf |= 0x04; // RS = 0, RW = 0, EN = 1
+write_word(buf);
+delay(2);
+buf &= 0xFB; // Make EN = 0
+write_word(buf);
+}
+
+void send_data(int data){
+int buf;
+// Send bit7-4 firstly
+buf = data & 0xF0;
+buf |= 0x05; // RS = 1, RW = 0, EN = 1
+write_word(buf);
+delay(2);
+buf &= 0xFB; // Make EN = 0
+write_word(buf);
+
+// Send bit3-0 secondly
+buf = (data & 0x0F) << 4;
+buf |= 0x05; // RS = 1, RW = 0, EN = 1
+write_word(buf);
+delay(2);
+buf &= 0xFB; // Make EN = 0
+write_word(buf);
+}
+
+void init(){
+send_command(0x33); // Must initialize to 8-line mode at first
+delay(5);
+send_command(0x32); // Then initialize to 4-line mode
+delay(5);
+send_command(0x28); // 2 Lines & 5*7 dots
+delay(5);
+send_command(0x0C); // Enable display without cursor
+delay(5);
+send_command(0x01); // Clear Screen
+wiringPiI2CWrite(fd, 0x08);
+}
+
+void clear(){
+send_command(0x01); //clear Screen
+}
+
+
+int main( void )
+{
+time_t mytime = time(NULL);         //time function
+char * time_str = ctime(&mytime);
+time_str[strlen(time_str)-1] = '\0';
+printf("Current Time : %s\n"), time_str;
+sprintf(timeForData,"%s\n", time_str);
+//char rangedBasedStr [100] = "select * from data where time between";
+
+fd = wiringPiI2CSetup(LCDAddr);//lcd initialization
+init();
+
+conn = mysql_init(NULL);//database initialization
+/* Connect to database */
+if (!mysql_real_connect(conn, server,
+user, password, database, 0, NULL, 0))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+
+unsigned int ch;
+while ((ch=choiceMenu()) != 0)
+{
+switch(ch)
+{
+case 1:
+clear();
+if (mysql_query(conn, "select min(temp) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("minimum temperature in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray,"%s \n", row[0]);
+lcdEnd = strcat(lcdArray, " F");
+printf(lcdArray);
+write(0,0,lcdArray);
+mysql_free_result(res);
+}
+
+break;
+
+
+case 2:
+clear();
+if (mysql_query(conn, "select max(temp) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("maximum temperature in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray,"%s \n", row[0]);
+lcdEnd = strcat(lcdArray, " F");
+printf(lcdArray);
+write(0,0,lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 3:
+clear();
+if (mysql_query(conn, "select avg(temp) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("average temperature in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray,"%s \n", row[0]);
+lcdEnd = strcat(lcdArray, " F");
+printf(lcdArray);
+write(0,0,lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 4:
+clear();
+if (mysql_query(conn, "select min(humidity) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("minimum humidity in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 5:
+clear();
+if (mysql_query(conn, "select max(humidity) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("maximum humidity in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 6:
+clear();
+if (mysql_query(conn, "select avg(humidity) from data;"))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("average humidity in database:\n");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 7:
+{
+clear();
+printf("enter two dates in this format:'yyyy-mm-dd'\n");
+scanf ("%s", firstDate);
+scanf ("%s", secondDate);
+
+
+rangeEnd = strcat(rangeBasedStr, firstDate);
+rangeEnd = strcat(rangeBasedStr, "and");
+rangeEnd = strcat(rangeBasedStr, secondDate);
+rangeEnd = strcat(rangeBasedStr, ";");
+
+unsigned int ch2;
+while ((ch2 = timeChoiceMenu()) !=0 )
+{
+
+switch(ch2)
+{
+case 1:
+clear();
+char arr1[100] = "select avg(temp) from data where time between ";
+strcat( arr1,rangeBasedStr);
+if (mysql_query(conn, arr1))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based average temp in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 2:
+clear();
+char arr2[100] = "select avg(humidity) from data where time between ";
+strcat( arr2,rangeBasedStr);
+
+if (mysql_query(conn, arr2))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based average humidity in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 3:
+clear();
+char arr3[100] = "select max(temp) from data where time between ";
+strcat( arr3,rangeBasedStr);
+
+if (mysql_query(conn, arr3))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based max temp in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 4:
+clear();
+char arr4[100] = "select max(humidity) from data where time between ";
+strcat( arr4,rangeBasedStr);
+
+if (mysql_query(conn, arr4))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based max humidity in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 5:
+clear();
+char arr5[100] = "select min(temp) from data where time between ";
+strcat( arr5,rangeBasedStr);
+if (mysql_query(conn, arr5))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based min temp in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 6:
+clear();
+char arr6[100] = "select min(humidity) from data where time between ";
+strcat( arr6,rangeBasedStr);
+if (mysql_query(conn, arr6))
+{
+fprintf(stderr, "%s\n", mysql_error(conn));
+exit(1);
+}
+res = mysql_use_result(conn);
+printf("ranged based min humidity in database:\n ");
+while ((row = mysql_fetch_row(res)) != NULL)
+{snprintf(lcdArray, "%s \n", row[0]);
+write(0,0,lcdArray);
+printf(lcdArray);
+mysql_free_result(res);
+}
+break;
+
+case 11:
+return 0;
+
+default:
+printf("Invalid choice!");
+break;
+scanf("%d",&userNumber2);
+}
+}
+break;
+}
+
+case 8:
+clear();
+printf(timeForData);
+write(0,0,timeForData);
+break;
+
+case 9:
+if ( wiringPiSetup() == -1 )
+{
+exit( 1 );
+}
+clear();
+currentTemp();
+break;
+
+case 10:
+return 0;
+
+default:
+printf("Invalid choice!");
+break;
+scanf("%d",&userNumber);
+}
+
+}
+
+
+
+
+
+write(0,0, "Raspberry Pi" );
+write(0,1, "Temperature test" );
+
+delay(3000);
+clear();
+
+if ( wiringPiSetup() == -1 )
+exit( 1 );
+
+
+
+while ( 1 )
+{
+GetDataToDatabase();
+
+delay( 10000 );
+}
+
+return(0);
+}
+
+
